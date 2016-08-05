@@ -35,3 +35,7 @@ jspm_packages
 
 # Optional REPL history
 .node_repl_history
+
+.vscode/.browse.VC.db
+.vscode/.browse.VC.db-wal
+aws.json
