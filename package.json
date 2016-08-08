@@ -1,10 +1,10 @@
 {
   "name": "node-sftp-s3",
   "version": "0.0.1",
-  "description": "Node JS module for creating an SFTP server that uses S3 for file storage",
+  "description": "Node JS module for creating an SFTP server with user isolation that uses S3 for file storage.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node ./node_modules/mocha/bin/mocha --recursive"
   },
   "repository": {
     "type": "git",
@@ -27,5 +27,13 @@
     "lodash": "^4.14.1",
     "moment": "^2.14.1",
     "ssh2": "^0.5.0"
+  },
+  "devDependencies": {
+    "sinon": "^1.17.5",
+    "mocha": "^3.0.2",
+    "chai": "^3.5.0",
+    "lodash": "^4.14.1",
+    "range-parser": "^1.2.0",
+    "sinon-chai": "2.8.0"
   }
 }

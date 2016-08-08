@@ -14,7 +14,7 @@ var server = new sftps3.SFTPS3Server(s3);
 //When using this module, make sure you generate your own key with openssl!
 server.addHostKey(fs.readFileSync(path.join(__dirname, 'keys/server_key_rsa')));
 
-//Add user's keys
+//Add users' keys
 server.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa.pub')), 'someuser');
 
 server.listen(2222, '127.0.0.1', function(port) {
