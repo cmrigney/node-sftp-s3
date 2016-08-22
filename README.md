@@ -25,7 +25,7 @@ var server = new SFTPS3Server(s3);
 server.addHostKey(fs.readFileSync(path.join(__dirname, 'server_key_rsa')));
 
 //Add users' public keys.  These can also be added after the server has already started
-server.addPublicKey(fs.readFileSync(path.join(__dirname, 'client_key_rsa.pub')), 'baruser');
+server.addPublicKey(fs.readFileSync(path.join(__dirname, 'client_key_rsa.pub')), 'baruser' /* , 'myapp' (optional path prefix) */);
 
 server.listen(2222, '127.0.0.1', function(port) {
   console.log('Listening on ' + port);
