@@ -6,7 +6,7 @@ declare module 'node-sftp-s3' {
   import { EventEmitter } from 'events';
 
   export class SFTPS3Server extends EventEmitter {
-    new(s3: AWS.S3): SFTPS3Server;
+    constructor(s3: AWS.S3);
 
     /**
      * Adds a public key for authentication for a username
