@@ -1,6 +1,6 @@
 {
   "name": "node-sftp-s3",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "Node JS module for creating an SFTP server with user isolation that uses S3 for file storage.",
   "main": "index.js",
   "scripts": {
