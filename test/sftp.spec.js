@@ -258,7 +258,7 @@ describe("SFTP", function() {
               return done(err);
             
             expect(lst.length).to.equal(1);
-            expect(lst[0].filename).to.equal('/abc.txt');
+            expect(lst[0].filename).to.equal('abc.txt');
             done();
           });
         });

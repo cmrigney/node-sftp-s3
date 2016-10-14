@@ -145,6 +145,19 @@ class S3Stub {
     process.nextTick(() => cb(null, {}));
   }
 
+  upload(params, cb) {
+    var key = params.Key;
+    var stream = params.Body;
+    var buffer = new Buffer(0);
+    stream.on('data', (d) => {
+      buffer = Buffer.concat([buffer, d]);
+    });
+    stream.on('finish', () => {
+      this.objects[key] = { data: buffer, size: buffer.length, LastModified: new Date() };
+      cb(null, {});
+    });
+  }
+
   putObject(params, cb) {
     var key = params.Key;
     var body = params.Body;
