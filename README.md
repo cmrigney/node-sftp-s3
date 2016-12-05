@@ -1,4 +1,6 @@
 # node-sftp-s3
+[![CircleCI](https://circleci.com/gh/cmrigney/node-sftp-s3.svg?style=svg)](https://circleci.com/gh/cmrigney/node-sftp-s3)
+
 Node JS module for creating an SFTP server with user isolation that uses S3 for file storage.
 
 ## Install
