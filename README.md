@@ -55,3 +55,13 @@ The path parameter includes the user's subfolder name.
 ## Notes
 
 Password authentication is NOT currently supported.  Only public/private key auth. It should be simple to add this feature.  A PR is welcome. :)
+
+### Docker
+
+The module also includes a server suitable for running in a Docker container.
+
+1. `cp .env.sample .env`
+2. Edit `.env` to add appropriate configuration values for all variables
+3. `mkdir keys && ssh-keygen -t rsa -f keys/server_key_rsa`
+4. For each user, `ssh-keygen -t rsa -f keys/id_<username>`
+5. `docker-compose up`
