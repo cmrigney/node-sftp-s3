@@ -1,0 +1,9 @@
+version: "3"
+
+services:
+    sftp:
+        build: .
+        image: sftp
+        env_file: .env
+        ports:
+            - "2222:2222"

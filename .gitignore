@@ -39,3 +39,5 @@ jspm_packages
 .vscode/.browse.VC.db
 .vscode/.browse.VC.db-wal
 aws.json
+keys/
+.env
