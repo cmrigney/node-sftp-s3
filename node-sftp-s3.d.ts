@@ -9,6 +9,16 @@ declare module 'node-sftp-s3' {
     constructor(s3: AWS.S3);
 
     /**
+     * Enables logging to standard output
+     */
+    enableLogging(): void;
+
+    /**
+     * Disables logging
+     */
+    disableLogging(): void;
+
+    /**
      * Adds a public key for authentication for a username
      *
      * @param {string} key
