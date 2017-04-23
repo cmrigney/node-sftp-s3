@@ -4,7 +4,8 @@
   "description": "Node JS module for creating an SFTP server with user isolation that uses S3 for file storage.",
   "main": "index.js",
   "scripts": {
-    "test": "node ./node_modules/mocha/bin/mocha --recursive"
+    "test": "./node_modules/.bin/nyc ./node_modules/mocha/bin/mocha --recursive",
+    "coverage": "./node_modules/.bin/nyc report --reporter=text-lcov | node ./node_modules/coveralls/bin/coveralls.js"
   },
   "repository": {
     "type": "git",
@@ -29,11 +30,14 @@
     "ssh2": "^0.5.0"
   },
   "devDependencies": {
-    "sinon": "^1.17.5",
-    "mocha": "^3.0.2",
     "chai": "^3.5.0",
+    "coveralls": "^2.13.0",
+    "istanbul": "^0.4.5",
     "lodash": "^4.14.1",
+    "mocha": "^3.0.2",
+    "nyc": "^10.2.0",
     "range-parser": "^1.2.0",
+    "sinon": "^1.17.5",
     "sinon-chai": "2.8.0"
   }
 }
