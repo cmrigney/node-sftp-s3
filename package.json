@@ -36,7 +36,7 @@
     "lodash": "^4.14.1",
     "mocha": "^3.0.2",
     "nyc": "^10.2.0",
-    "range-parser": "^1.2.0",
+    "http-range": "^1.0.0",
     "sinon": "^1.17.5",
     "sinon-chai": "2.8.0"
   }
