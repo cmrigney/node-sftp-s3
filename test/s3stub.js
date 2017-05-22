@@ -1,6 +1,6 @@
 'use strict';
 var _ = require('lodash');
-var parseRange = require('range-parser');
+var Range = require('http-range').Range;
 
 class S3Stub {
   constructor(params) {
@@ -92,8 +92,8 @@ class S3Stub {
     
     var data = obj.data;
     if(range) {
-      range = parseRange(data.length, range)[0];
-      data = data.slice(range.start, range.end + 1);
+      var r = Range.prototype.parse(range)._ranges[0]._range;
+      data = data.slice(r[0], r[1] + 1);
     }
 
     process.nextTick(() => cb(null, { Body: data, Size: data.length, LastModified: obj.LastModified }));
