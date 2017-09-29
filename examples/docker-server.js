@@ -10,6 +10,7 @@ var defaultRegion = process.env.AWS_DEFAULT_REGION
 var s3Bucket = process.env.AWS_S3_BUCKET
 var s3Prefix = process.env.AWS_S3_PREFIX
 var sftpPort = process.env.SFTP_PORT
+var loggingEnabled = process.env.LOGGING_ENABLED
 
 // Initialize AWS S3 client
 var s3 = new AWS.S3({ params: { Bucket: s3Bucket } });
@@ -21,6 +22,8 @@ AWS.config.s3 = {
 
 
 var server = new sftps3.SFTPS3Server(s3);
+if(loggingEnabled)
+  server.enableLogging();
 
 //When using this module, make sure you generate your own key with openssl!
 server.addHostKey(fs.readFileSync(path.join(__dirname, 'keys/server_key_rsa')));
