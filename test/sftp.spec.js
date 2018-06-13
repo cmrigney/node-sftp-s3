@@ -78,6 +78,7 @@ describe("SFTP", function() {
   });
 
   it("Should Write and Read and Delete Correctly", function(done) {
+    this.timeout(10000);
     var uploadedSpy = getEventSpy(server, 'file-uploaded');
     var downloadedSpy = getEventSpy(server, 'file-downloaded');
     var deletedSpy = getEventSpy(server, 'file-deleted');
