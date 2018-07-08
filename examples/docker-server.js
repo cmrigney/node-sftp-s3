@@ -1,4 +1,4 @@
-var sftps3 = require('./index.js');
+var sftps3 = require('./dist/index.js');
 
 var AWS = require('aws-sdk');
 var path = require('path');
@@ -13,15 +13,15 @@ var sftpPort = process.env.SFTP_PORT
 var loggingEnabled = process.env.LOGGING_ENABLED
 
 // Initialize AWS S3 client
-var s3 = new AWS.S3({ params: { Bucket: s3Bucket } });
+var s3 = new AWS.S3();
 
 // Configure S3 client
 AWS.config.s3 = {
   region: defaultRegion
 }
 
-
-var server = new sftps3.SFTPS3Server(s3);
+var authHandler = new sftps3.InMemoryAuthHandler(s3, s3Bucket);
+var server = new sftps3.SFTPS3Server(authHandler);
 if(loggingEnabled)
   server.enableLogging();
 
@@ -42,7 +42,7 @@ fs.readdir(path.join(__dirname, 'keys'), '', function(err, files) {
     return userPattern.exec(file)[1];
   }).forEach(function(username) {
     console.log(util.format('found public key for user %s', username));
-    server.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_' + username + '.pub')), username, s3Prefix);
+    authHandler.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_' + username + '.pub')), username, s3Prefix);
   });
 });
 

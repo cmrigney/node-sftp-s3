@@ -5,14 +5,14 @@
       "name": "Launch Example",
       "type": "node",
       "request": "launch",
-      "program": "${workspaceRoot}/examples/sample-server.js",
       "stopOnEntry": false,
-      "args": [],
+      "args": ["${workspaceRoot}/examples/sample-server.ts"],
       "cwd": "${workspaceRoot}",
       "preLaunchTask": null,
       "runtimeExecutable": null,
       "runtimeArgs": [
-        "--nolazy"
+        "--nolazy",
+        "-r", "ts-node/register"
       ],
       "envFile": "${workspaceFolder}/.env",
       "env": {

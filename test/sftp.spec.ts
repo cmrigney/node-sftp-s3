@@ -1,9 +1,11 @@
+import { SFTPS3Server } from "../index";
+import InMemoryAuthHandler from "../lib/InMemoryAuthHandler";
+const S3Stub = require('./s3stub');
+
 'use strict';
 
 var chai = require('chai');
 var sinon = require('sinon');
-var SFTPServer = require('../index.js').SFTPS3Server;
-var S3Stub = require('./s3stub.js');
 var fs = require('fs');
 var path = require('path');
 
@@ -15,11 +17,15 @@ var expect = chai.expect;
 
 describe("SFTP", function() {
 
-  var s3Instance = new S3Stub({ Bucket: 'test' });
-  var server;
+  const s3Instance = new S3Stub({ Bucket: 'test' });
+  let server: SFTPS3Server;
+  let authHandler: InMemoryAuthHandler;
 
   beforeEach(() => {
-    server = new SFTPServer(s3Instance);
+    authHandler = new InMemoryAuthHandler(s3Instance, 'test');
+    authHandler.disableLogging();
+    server = new SFTPS3Server(authHandler);
+    server.disableLogging();
   });
 
   afterEach((done) => {
@@ -29,11 +35,11 @@ describe("SFTP", function() {
   it("Should Authenticate User", function(done) {
     var loginSpy = getEventSpy(server, 'login');
     server.addHostKey(fs.readFileSync(path.join(__dirname, 'keys/server_key_rsa')));
-    server.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa.pub')), 'foo');
+    authHandler.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa.pub')), 'foo');
     server.listen(2222, '127.0.0.1', () => {
       var conn = new Client();
       conn.on('ready', () => {
-        conn.sftp((err, sftp) => {
+        conn.sftp((err: Error, sftp: any) => {
           conn.end();
           if(err)
             return done(err);
@@ -41,7 +47,7 @@ describe("SFTP", function() {
           done();
         });
       })
-      .on('error', (err) => {
+      .on('error', (err: Error) => {
         done(err);
       })
       .connect({
@@ -56,11 +62,11 @@ describe("SFTP", function() {
 
   it("Should Failed to Authenticate User", function(done) {
     server.addHostKey(fs.readFileSync(path.join(__dirname, 'keys/server_key_rsa')));
-    server.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa.pub')), 'foo');
+    authHandler.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa.pub')), 'foo');
     server.listen(2222, '127.0.0.1', () => {
       var conn = new Client();
       conn.on('ready', () => {
-        conn.sftp((err, sftp) => {
+        conn.sftp((err: Error, sftp: any) => {
           conn.end();
           done(new Error('Incorrectly logged user in'));
         });
@@ -83,16 +89,16 @@ describe("SFTP", function() {
     var downloadedSpy = getEventSpy(server, 'file-downloaded');
     var deletedSpy = getEventSpy(server, 'file-deleted');
     server.addHostKey(fs.readFileSync(path.join(__dirname, 'keys/server_key_rsa')));
-    server.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa.pub')), 'foo');
-    server.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa2.pub')), 'bar');
+    authHandler.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa.pub')), 'foo');
+    authHandler.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa2.pub')), 'bar');
 
     server.listen(2222, '127.0.0.1', () => {
       writeTest();
 
       function writeTest() {
-        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn, sftp) => {
+        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn: any, sftp: any) => {
           var stream = sftp.createWriteStream('/test.txt');
-          stream.on('error', (err) => {
+          stream.on('error', (err: Error) => {
             conn.end();
             done(err);
           });
@@ -108,15 +114,15 @@ describe("SFTP", function() {
       }
 
       function readTest() {
-        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn, sftp) => {
+        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn: any, sftp: any) => {
           var stream = sftp.createReadStream('/test.txt', { start: 1, end: 2, encoding: 'utf8' });
-          stream.on('error', (err) => {
+          stream.on('error', (err: Error) => {
             conn.end();
             done(err);
           });
           var result = '';
-          stream.on('data', (d) => result += d);
-          stream.on('end', (d) => {
+          stream.on('data', (d: any) => result += d);
+          stream.on('end', (d: any) => {
             if(d)
               result += d;
 
@@ -131,13 +137,13 @@ describe("SFTP", function() {
       }
 
       function readFromAnotherUser() {
-        execClientSFTP('bar', 'keys/id_rsa2', server, done, (conn, sftp) => {
+        execClientSFTP('bar', 'keys/id_rsa2', server, done, (conn: any, sftp: any) => {
           var stream = sftp.createReadStream('/test.txt', { start: 1, end: 2, encoding: 'utf8' });
-          stream.on('error', (err) => {
+          stream.on('error', (err: Error) => {
             conn.end();
             listFromAnotherUser();
           });
-          stream.on('data', (d) => {
+          stream.on('data', (d: any) => {
             conn.end();
             done(new Error('Should not have been able to read data'));
           });
@@ -145,8 +151,8 @@ describe("SFTP", function() {
       }
 
       function listFromAnotherUser() {
-        execClientSFTP('bar', 'keys/id_rsa2', server, done, (conn, sftp) => {
-          sftp.readdir('/', (err, lst) => {
+        execClientSFTP('bar', 'keys/id_rsa2', server, done, (conn: any, sftp: any) => {
+          sftp.readdir('/', (err: Error, lst: any) => {
             conn.end();
             if(err)
               return done(err);
@@ -158,8 +164,8 @@ describe("SFTP", function() {
       }
 
       function deleteFile() {
-        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn, sftp) => {
-          sftp.unlink('/test.txt', (err) => {
+        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn: any, sftp: any) => {
+          sftp.unlink('/test.txt', (err: Error) => {
             conn.end();
             if(err)
               return done(err);
@@ -178,15 +184,15 @@ describe("SFTP", function() {
     var createDirSpy = getEventSpy(server, 'directory-created');
     var deleteDirSpy = getEventSpy(server, 'directory-deleted');
     server.addHostKey(fs.readFileSync(path.join(__dirname, 'keys/server_key_rsa')));
-    server.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa.pub')), 'foo');
-    server.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa2.pub')), 'bar');
+    authHandler.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa.pub')), 'foo');
+    authHandler.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa2.pub')), 'bar');
 
     server.listen(2222, '127.0.0.1', () => {
       createDir();
 
       function createDir() {
-        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn, sftp) => {
-          sftp.mkdir('/somedir', (err) => {
+        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn: any, sftp: any) => {
+          sftp.mkdir('/somedir', (err: Error) => {
             conn.end();
             if(err)
               return done(err);
@@ -199,8 +205,8 @@ describe("SFTP", function() {
       }
 
       function removeDir() {
-        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn, sftp) => {
-          sftp.rmdir('/somedir', (err) => {
+        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn: any, sftp: any) => {
+          sftp.rmdir('/somedir', (err: Error) => {
             conn.end();
             if(err)
               return done(err);
@@ -217,16 +223,16 @@ describe("SFTP", function() {
   it("Rename File", function(done) {
     var renameSpy = getEventSpy(server, 'file-renamed');
     server.addHostKey(fs.readFileSync(path.join(__dirname, 'keys/server_key_rsa')));
-    server.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa.pub')), 'foo');
-    server.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa2.pub')), 'bar');
+    authHandler.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa.pub')), 'foo');
+    authHandler.addPublicKey(fs.readFileSync(path.join(__dirname, 'keys/id_rsa2.pub')), 'bar');
 
     server.listen(2222, '127.0.0.1', () => {
       write();
 
       function write() {
-        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn, sftp) => {
+        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn: any, sftp: any) => {
           var stream = sftp.createWriteStream('/test.txt');
-          stream.on('error', (err) => {
+          stream.on('error', (err: Error) => {
             conn.end();
             done(err);
           });
@@ -238,8 +244,8 @@ describe("SFTP", function() {
       }
 
       function rename() {
-        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn, sftp) => {
-          sftp.rename('/test.txt', '/abc.txt', (err) => {
+        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn: any, sftp: any) => {
+          sftp.rename('/test.txt', '/abc.txt', (err: Error) => {
             conn.end();
             if(err)
               return done(err);
@@ -252,8 +258,8 @@ describe("SFTP", function() {
       }
 
       function ensureRenamed() {
-        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn, sftp) => {
-          sftp.readdir('/', (err, lst) => {
+        execClientSFTP('foo', 'keys/id_rsa', server, done, (conn: any, sftp: any) => {
+          sftp.readdir('/', (err: Error, lst: any) => {
             conn.end();
             if(err)
               return done(err);
@@ -267,14 +273,14 @@ describe("SFTP", function() {
     });
   });
 
-  function execClientSFTP(username, key, server, done, fn) {
+  function execClientSFTP(username: string, key: string, server: SFTPS3Server, done: Function, fn: Function) {
     var conn = new Client();
     conn.on('ready', () => {
-      conn.sftp((err, sftp) => {
+      conn.sftp((err: Error, sftp: any) => {
         fn(conn, sftp);
       });
     })
-    .on('error', (err) => {
+    .on('error', (err: Error) => {
       done(err);
     })
     .connect({
@@ -285,8 +291,8 @@ describe("SFTP", function() {
     });
   }
 
-  function getEventSpy(obj, event) {
-    var x = {};
+  function getEventSpy(obj: any, event: string) {
+    var x: { [k: string]: any } = {};
     x[event] = function noop() {
       //console.log(event + ' called');
     };

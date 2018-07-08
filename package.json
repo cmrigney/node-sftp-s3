@@ -2,10 +2,14 @@
   "name": "node-sftp-s3",
   "version": "0.0.10",
   "description": "Node JS module for creating an SFTP server with user isolation that uses S3 for file storage.",
-  "main": "index.js",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "scripts": {
-    "test": "./node_modules/.bin/nyc ./node_modules/mocha/bin/mocha --recursive",
-    "coverage": "./node_modules/.bin/nyc report --reporter=text-lcov | node ./node_modules/coveralls/bin/coveralls.js"
+    "test": "./node_modules/.bin/nyc ./node_modules/mocha/bin/mocha --recursive --compilers ts:ts-node/register --require source-map-support/register --full-trace",
+    "coverage": "./node_modules/.bin/nyc report --reporter=text-lcov | node ./node_modules/coveralls/bin/coveralls.js",
+    "build": "tsc -p tsconfig.json",
+    "postinstall": "npm run build",
+    "example": "./load_dotenv.sh 'ts-node examples/sample-server.ts'"
   },
   "repository": {
     "type": "git",
@@ -23,21 +27,47 @@
   },
   "homepage": "https://github.com/codyrigney92/node-sftp-s3#readme",
   "dependencies": {
-    "aws-sdk": "^2.4.12",
+    "aws-sdk": "^2.270.1",
     "buffer-equal-constant-time": "^1.0.1",
     "lodash": "^4.14.1",
     "moment": "^2.14.1",
     "ssh2": "^0.6.1"
   },
   "devDependencies": {
+    "@types/lodash": "^4.14.110",
+    "@types/mocha": "^5.2.4",
+    "@types/node": "^8.10.20",
+    "@types/ssh2": "^0.5.35",
     "chai": "^3.5.0",
     "coveralls": "^2.13.0",
+    "http-range": "^1.0.0",
     "istanbul": "^0.4.5",
     "lodash": "^4.14.1",
     "mocha": "^3.0.2",
     "nyc": "^10.2.0",
-    "http-range": "^1.0.0",
     "sinon": "^1.17.5",
-    "sinon-chai": "2.8.0"
+    "sinon-chai": "2.8.0",
+    "source-map-support": "^0.5.6",
+    "ts-node": "^7.0.0",
+    "typescript": "^2.9.2"
+  },
+  "nyc": {
+    "require": [
+      "ts-node/register"
+    ],
+    "sourceMap": true,
+    "instrument": true,
+    "extension": [
+      ".ts"
+    ],
+    "include": [
+      "lib/**/*.ts",
+      "test/**/*.ts"
+    ],
+    "exclude": [
+      "typings",
+      "**/*.d.ts"
+    ],
+    "all": true
   }
 }

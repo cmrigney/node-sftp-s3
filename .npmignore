@@ -42,4 +42,6 @@ aws.json
 keys/
 .env
 
-dist
+# NPM specific
+.vscode
+.circleci

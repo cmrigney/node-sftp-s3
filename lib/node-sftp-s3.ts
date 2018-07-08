@@ -1,26 +1,30 @@
 'use strict';
 
-var crypto = require('crypto');
-var _path = require('path');
-var constants = require('constants');
-var EventEmitter = require('events').EventEmitter;
-var PassThrough = require('stream').PassThrough;
+import crypto from 'crypto';
+import _path from 'path';
+import constants from 'constants';
+import { EventEmitter } from 'events';
+import { PassThrough } from 'stream';
 
-var moment = require('moment');
-var _ = require('lodash');
-var buffersEqual = require('buffer-equal-constant-time');
-var ssh2 = require('ssh2');
-var utils = ssh2.utils;
-var OPEN_MODE = ssh2.SFTP_OPEN_MODE;
-var STATUS_CODE = ssh2.SFTP_STATUS_CODE;
+import moment from 'moment';
+import _ from 'lodash';
+import ssh2 from 'ssh2';
+const OPEN_MODE = ssh2.SFTP_OPEN_MODE;
+const STATUS_CODE = ssh2.SFTP_STATUS_CODE;
+import { S3 } from 'aws-sdk';
 
-const util = require('util');
+import util from 'util';
+import { AuthHandler, UserData, FileHandle, DirectoryHandle } from './types';
+import { FileEntry, Attributes } from 'ssh2-streams';
+import { ObjectIdentifier } from 'aws-sdk/clients/s3';
 
-class SFTPS3Server extends EventEmitter {
-  constructor(s3Instance) {
+export default class SFTPS3Server extends EventEmitter {
+  private hostKeys: Array<any>;
+  private loggingEnabled: boolean;
+  private ssh?: ssh2.Server|null;
+
+  constructor(private authHandler: AuthHandler) {
     super();
-    this.s3 = s3Instance;
-    this.publicKeys = [];
     this.hostKeys = [];
     this.loggingEnabled = false;
   }
@@ -40,112 +44,80 @@ class SFTPS3Server extends EventEmitter {
   }
 
   /**
-   * Adds a public key for authentication for a username
-   *
-   * @param {string} key
-   * @param {string} username - username for specified key
-   * @param {string} [ns] - Additional path prefix
-   */
-  addPublicKey(key, username, ns) {
-    var pubKey = utils.genPublicKey(utils.parseKey(key));
-    var path = _path.normalize(username);
-    if(ns) {
-      path = _path.join(_path.normalize(ns), path);
-    }
-
-    while (path.indexOf('\\') >= 0)
-      path = path.replace('\\', '/');
-
-    this.publicKeys.push({ key: pubKey, username: username, path: path });
-    this._log(util.format('Added public key for username %s, path %s', username, path));
-  }
-
-  /**
-   * Remove the public key for a username
-   *
-   * @param {string} username
-   */
-  removePublicKey(username) {
-    const self = this;
-    _.remove(this.publicKeys, (p) => {
-      self._log(util.format('Removed public key for username %s', username));
-      return p.username === username;
-    });
-  }
-
-  /**
-   * Remove all public keys
-   */
-  removeAllPublicKeys() {
-    this._log(util.format('Removed all public keys'));
-    this.publicKeys = [];
-  }
-
-  /**
    * Add a host key. You need at least one host key before you can start the server.
-   *
-   * @param {string} key
    */
-  addHostKey(key) {
+  addHostKey(key: string) {
     this._log('Added server key');
     this.hostKeys.push(key);
   }
 
   /**
    * Starts the SFTP server listening
-   *
-   * @param {number} port
-   * @param {string} bindAddress
-   * @param {Function} [callback]
    */
-  listen(port, bindAddress, callback) {
+  listen(port: number, bindAddress: string, callback: (port: number) => any) {
     if(this.ssh)
       throw new Error('Already running');
+    
+    const supportedMethods: Array<"publickey"|"password"> = [];
+    if(this.authHandler.publicKeyAuthSupported())
+      supportedMethods.push('publickey');
+    if(this.authHandler.passwordAuthSupported())
+      supportedMethods.push('password');
 
     this.ssh = new ssh2.Server({
       hostKeys: this.hostKeys
     }, (client) => {
-      var pubKey;
+      let userData: UserData;
       client.on('error', (err) => {
         this.emit('client-error', { client: client, error: err });
       });
       client.on('authentication', (ctx) => {
-        if(ctx.method !== 'publickey') {
-          this._log('rejecting non-public-key authentication');
-          return ctx.reject(['publickey']);
-        }
+        if(ctx.method === 'publickey' && _.includes(supportedMethods, 'publickey')) {
+          this.authHandler.authorizePublicKey(ctx.username, ctx.key).then(authResult => {
+            if(!authResult.success) {
+              this._log(`user login attempt failed for ${ctx.username}`);
+              return ctx.reject(supportedMethods);
+            }
+            
+            this._log(`user login attempt success for ${ctx.username}`);
 
-        pubKey = this._findKey(ctx.username, ctx.key);
-        if(!pubKey) {
-          this._log('public key not found');
-          return ctx.reject(['publickey']);
-        }
-
-        if(ctx.signature) {
-          var verifier = crypto.createVerify(ctx.sigAlgo);
-          verifier.update(ctx.blob);
-          if(verifier.verify(pubKey.key.publicOrig, ctx.signature)) {
-            this._log('signature verified');
-            return ctx.accept();
-          }
-          else {
-            this._log('signature rejected');
-            return ctx.reject();
-          }
+            userData = authResult.userData as UserData;
+    
+            if(ctx.signature) {
+              var verifier = crypto.createVerify(ctx.sigAlgo);
+              verifier.update(ctx.blob);
+              if(verifier.verify(userData.key.publicOrig, ctx.signature)) {
+                this._log('signature verified');
+                return ctx.accept();
+              }
+              else {
+                this._log('signature rejected');
+                return ctx.reject();
+              }
+            }
+            else {
+              this._log('no signature present');
+              return ctx.accept();
+            }
+          })
+          .catch((err: Error) => {
+            this._log(`error occurred logging in as ${ctx.username} - ${err.message}`);
+            ctx.reject();
+          });
         }
         else {
-          this._log('no signature present');
-          return ctx.accept();
+          this._log('rejecting unsupported authentication');
+          return ctx.reject(supportedMethods);
         }
       })
       .on('ready', () => {
         client.on('session', (accept, reject) => {
           var session = accept();
-          this._log(util.format('logging on %s', pubKey.username));
-          this.emit('login', { username: pubKey.username });
+          this._log(util.format('logging on %s', userData.username));
+          this.emit('login', { username: userData.username });
           session.on('sftp', (accept, reject) => {
-            var openFiles = {};
-            var openDirs = {};
+            var openFiles: { [k: string]: FileHandle } = {};
+            var openDirs: { [k: string]: DirectoryHandle } = {};
             var handleCount = 0;
 
             var sftpStream = accept();
@@ -154,18 +126,19 @@ class SFTPS3Server extends EventEmitter {
               if(filename.endsWith('\\') || filename.endsWith('/')) {
                 filename = filename.substring(0, filename.length - 1 );
               }
-              var fullname = this._mapKey(pubKey.path, filename);
+              var fullname = this._mapKey(userData.path, filename);
 
               if(flags & OPEN_MODE.READ) {
-                this.s3.listObjects({
-                  Prefix: fullname
+                userData.s3.listObjects({
+                  Prefix: fullname,
+                  Bucket: userData.bucket
                 }, (err, data) => {
                   if(err) {
                     this._log(util.format('S3 error listing %s: %s', fullname, err));
                     return sftpStream.status(reqid, STATUS_CODE.FAILURE);
                   }
 
-                  var f = _.find(data.Contents, { Key: fullname }); //exact filename match
+                  var f = _.find(data.Contents, { Key: fullname }) as S3.Object; //exact filename match
                   if(!f) {
                     this._log(util.format('Key %s not found in S3 list', fullname));
                     return sftpStream.status(reqid, STATUS_CODE.NO_SUCH_FILE);
@@ -189,11 +162,21 @@ class SFTPS3Server extends EventEmitter {
                 handle.writeUInt32BE(handleCount++, 0, true);
                 sftpStream.handle(reqid, handle);
 
-                this.s3.upload({
+                userData.s3.upload({
                   Key: fullname,
-                  Body: stream
-                }, (err, data) => {
+                  Body: stream,
+                  Bucket: userData.bucket
+                }, (err: Error, data: S3.ManagedUpload.SendData) => {
                   //Done uploading
+
+                  if(_.isUndefined(state.reqid))
+                    return;
+
+                  if(_.isUndefined(state.fnum)) {
+                    this._log('undefined handles');
+                    return sftpStream.status(state.reqid as number, STATUS_CODE.FAILURE);
+                  }
+
                   delete openFiles[state.fnum];
 
                   if(err) {
@@ -202,7 +185,7 @@ class SFTPS3Server extends EventEmitter {
                   }
 
                   this._log(util.format('Successfully uploaded %s', fullname));
-                  this.emit('file-uploaded', { path: state.fullname, username: pubKey.username });
+                  this.emit('file-uploaded', { path: state.fullname, username: userData.username });
                   sftpStream.status(state.reqid, STATUS_CODE.OK);
                 });
               }
@@ -229,29 +212,33 @@ class SFTPS3Server extends EventEmitter {
                 return sftpStream.status(reqid, STATUS_CODE.EOF);
               }
 
-              if(offset + length > state.size)
-                length = state.size - offset;
+              const size = state.size || 0;
 
-              if(offset >= state.size || length === 0) {
+              if(offset + length > size)
+                length = size - offset;
+
+              if(offset >= size || length === 0) {
                 this._log('Invalid offset');
                 return sftpStream.status(reqid, STATUS_CODE.FAILURE);
               }
 
-              if(offset + length >= state.size) {
+              if(offset + length >= size) {
                 state.read = true;
               }
 
-              this.s3.getObject({
+              userData.s3.getObject({
                  Key: state.fullname,
-                 Range: `bytes=${offset}-${offset+length-1}`
-              }, (err, data) => {
-                if(err || data.Body.length === 0) {
+                 Range: `bytes=${offset}-${offset+length-1}`,
+                 Bucket: userData.bucket
+              }, (err: Error, data: S3.GetObjectOutput) => {
+                const body = data && data.Body as string|Buffer;
+                if(err || body.length === 0) {
                   this._log(util.format('S3 error getting object %s: %s', state.fullname, err));
                   return sftpStream.status(reqid, STATUS_CODE.FAILURE);
                 }
 
                 this._log(util.format('Successfully read %s', state.fullname));
-                sftpStream.data(reqid, data.Body);
+                sftpStream.data(reqid, body);
               });
 
             }).on('WRITE', (reqid, handle, offset, data) => {
@@ -268,25 +255,37 @@ class SFTPS3Server extends EventEmitter {
                 return sftpStream.status(reqid, STATUS_CODE.FAILURE);
               }
 
-              state.stream.write(new Buffer(data), (err, data) => {
+              if(state.stream) {
+                state.stream.write(new Buffer(data), (err: Error) => {
+                  if(err) {
+                    this._log('Error writing to stream');
+                    return sftpStream.status(reqid, STATUS_CODE.FAILURE);
+                  }
+
+                  this._log('Wrote bytes to stream');
+                  sftpStream.status(reqid, STATUS_CODE.OK);
+                });
+              }
+              else {
+                this._log('stream undefined');
+                sftpStream.status(reqid, STATUS_CODE.FAILURE);
+              }
+            }).on('OPENDIR', (reqid, path) => {
+              this._log(util.format('SFTP OPENDIR %s', path));
+              var fullname = this._mapKey(userData.path, path);
+              var isRoot = (path === '/');
+
+              userData.s3.listObjects({
+                Prefix: fullname,
+                Bucket: userData.bucket
+              }, (err: Error, data: S3.ListObjectsOutput) => {
                 if(err) {
-                  this._log('Error writing to stream');
+                  this._log(util.format('S3 error listing %s: %s', fullname, err));
                   return sftpStream.status(reqid, STATUS_CODE.FAILURE);
                 }
 
-                this._log('Wrote bytes to stream');
-                sftpStream.status(reqid, STATUS_CODE.OK);
-              });
-            }).on('OPENDIR', (reqid, path) => {
-              this._log(util.format('SFTP OPENDIR %s', path));
-              var fullname = this._mapKey(pubKey.path, path);
-              var isRoot = (path === '/');
-
-              this.s3.listObjects({
-                Prefix: fullname
-              }, (err, data) => {
-                if(err) {
-                  this._log(util.format('S3 error listing %s: %s', fullname, err));
+                if(!data.Contents) {
+                  this._log('Failure, no data contents');
                   return sftpStream.status(reqid, STATUS_CODE.FAILURE);
                 }
 
@@ -297,7 +296,10 @@ class SFTPS3Server extends EventEmitter {
 
                 var handle = new Buffer(4);
 
-                var listings = _.filter(data.Contents, (c) => {
+                var listings = _.filter(data.Contents as Array<S3.Object & { IsDir: boolean }>, (c) => {
+                  if(!c.Key)
+                    return false;
+
                   var f = c.Key.substring(fullname.length);
                   if(!f.startsWith('/'))
                     f = '/' + f;
@@ -342,14 +344,19 @@ class SFTPS3Server extends EventEmitter {
 
               state.read = true;
 
-              sftpStream.name(reqid, state.listings.map((l) => {
-                var filename = l.Key.substring(state.fullname.length);
+              sftpStream.name(reqid, state.listings.map((obj): FileEntry => {
+                const l = obj as S3.Object & { IsDir: boolean };
+
+                if(_.isUndefined(l.Key))
+                  throw new Error('key undefined');
+
+                let filename = l.Key.substring(state.fullname.length);
                 if(filename.startsWith('/'))
                   filename = filename.substring(1);
                 if(filename.endsWith('/'))
                   filename = filename.substring(0, filename.length - 1);
 
-                var mode = 0;
+                let mode = 0;
                 mode |= constants.S_IRWXU; // read, write, execute for user
                 mode |= constants.S_IRWXG; // read, write, execute for group
                 mode |= constants.S_IRWXO; // read, write, execute for other
@@ -359,21 +366,23 @@ class SFTPS3Server extends EventEmitter {
                 else
                   mode |= constants.S_IFREG;
 
-                var attrs = {
+                const lastMod = l.LastModified || new Date();
+
+                const attrs: Attributes = {
                   mode: mode,
                   uid: 0,
                   gid: 0,
-                  size: (l.IsDir ? 1 : l.Size),
-                  atime: l.LastModified,
-                  mtime: l.LastModified
+                  size: (l.IsDir ? 1 : l.Size) || 0,
+                  atime: Math.floor(+lastMod/1000),
+                  mtime: Math.floor(+lastMod/1000)
                 };
 
-                var lastModified = moment(l.LastModified);
+                const lastModified = moment(l.LastModified);
 
                 this._log('Returned directory details');
                 return {
                   filename: filename,
-                  longname: `${l.IsDir ? 'd' : '-'}rw-rw-rw-    1 ${pubKey.username}  ${pubKey.username} ${l.Size} ${lastModified.format('MMM D')} ${moment().year() === lastModified.year() ? lastModified.format('HH:mm') : lastModified.format('YYYY')} ${_path.basename(filename)}`,
+                  longname: `${l.IsDir ? 'd' : '-'}rw-rw-rw-    1 ${userData.username}  ${userData.username} ${l.Size} ${lastModified.format('MMM D')} ${moment().year() === lastModified.year() ? lastModified.format('HH:mm') : lastModified.format('YYYY')} ${_path.basename(filename)}`,
                   attrs: attrs
                 };
               }));
@@ -392,22 +401,27 @@ class SFTPS3Server extends EventEmitter {
               if(!p.startsWith('/'))
                 p = '/' + p;
 
-              var fullname = this._mapKey(pubKey.path, path);
+              var fullname = this._mapKey(userData.path, path);
 
               this._log(util.format('listing objects under %s (%s)', fullname, p));
-              this.s3.listObjects({
-                Prefix: fullname
+              userData.s3.listObjects({
+                Prefix: fullname,
+                Bucket: userData.bucket
               }, (err, data) => {
                 if(err) {
                   this._log(util.format('S3 error listing %s: %s', fullname, err));
                   return sftpStream.status(reqid, STATUS_CODE.FAILURE);
                 }
+                if(_.isUndefined(data.Contents)) {
+                  this._log('contents undefined');
+                  return sftpStream.status(reqid, STATUS_CODE.FAILURE);
+                }
 
                 this._log(util.format('%d objects found', data.Contents.length));
 
-                var realObj = _.find(data.Contents, (c) => c.Key === fullname || c.Key === (fullname + '/.dir'));
+                var realObj = _.find(data.Contents, (c) => c.Key === fullname || c.Key === (fullname + '/.dir')) as S3.Object & { IsDir: boolean };
 
-                if(realObj && realObj.Key.endsWith('.dir')) {
+                if(realObj && realObj.Key && realObj.Key.endsWith('.dir')) {
                   this._log(util.format('%s is a directory', realObj.Key));
                   realObj.IsDir = true;
                 }
@@ -427,11 +441,33 @@ class SFTPS3Server extends EventEmitter {
                   return sftpStream.status(reqid, STATUS_CODE.NO_SUCH_FILE);
                 }
 
-                var lastModified = moment(realObj.LastModified);
+                let mode = 0;
+                mode |= constants.S_IRWXU; // read, write, execute for user
+                mode |= constants.S_IRWXG; // read, write, execute for group
+                mode |= constants.S_IRWXO; // read, write, execute for other
 
-                var name = [{
+                if(realObj.IsDir)
+                  mode |= constants.S_IFDIR;
+                else
+                  mode |= constants.S_IFREG;
+
+                const lastMod = realObj.LastModified || new Date();
+
+                const attrs: Attributes = {
+                  mode: mode,
+                  uid: 0,
+                  gid: 0,
+                  size: (realObj.IsDir ? 1 : realObj.Size) || 0,
+                  atime: Math.floor(+lastMod/1000),
+                  mtime: Math.floor(+lastMod/1000)
+                };
+
+                const lastModified = moment(realObj.LastModified);
+
+                var name: Array<FileEntry> = [{
                   filename: p,
-                  longname: `${realObj.IsDir ? 'd' : '-'}rw-rw-rw-    1 ${pubKey.username}  ${pubKey.username} ${realObj.Size} ${lastModified.format('MMM D')} ${moment().year() === lastModified.year() ? lastModified.format('HH:mm') : lastModified.format('YYYY')} ${_path.basename(p) || p}`
+                  longname: `${realObj.IsDir ? 'd' : '-'}rw-rw-rw-    1 ${userData.username}  ${userData.username} ${realObj.Size} ${lastModified.format('MMM D')} ${moment().year() === lastModified.year() ? lastModified.format('HH:mm') : lastModified.format('YYYY')} ${_path.basename(p) || p}`,
+                  attrs: attrs
                 }];
 
                 this._log('Returning real name');
@@ -441,7 +477,7 @@ class SFTPS3Server extends EventEmitter {
               if (handle.length !== 4)
                 return sftpStream.status(reqid, STATUS_CODE.FAILURE);
               
-              var handleId = handle.readUInt32BE(0, true);
+              const handleId = handle.readUInt32BE(0, true);
               
               this._log(util.format('SFTP CLOSE handle=%d', handleId));
               
@@ -456,12 +492,13 @@ class SFTPS3Server extends EventEmitter {
                 if (openFiles[handleId].flags & OPEN_MODE.WRITE) {
                   state.reqid = reqid;
                   state.fnum = handleId;
-                  state.stream.end();
+                  if(!_.isUndefined(state.stream))
+                    state.stream.end();
                   this._log('Stream closed');
                   return;
                 }
                 else {
-                  this.emit('file-downloaded', { path: state.fullname, username: pubKey.username });
+                  this.emit('file-downloaded', { path: state.fullname, username: userData.username });
                   delete openFiles[handleId];
                 }
               }
@@ -473,10 +510,11 @@ class SFTPS3Server extends EventEmitter {
               sftpStream.status(reqid, STATUS_CODE.OK);
             }).on('REMOVE', (reqid, path) => {
               this._log(util.format('SFTP REMOVE %s', path));
-              var fullname = this._mapKey(pubKey.path, path);
+              var fullname = this._mapKey(userData.path, path);
 
-              this.s3.deleteObject({
-                Key: fullname
+              userData.s3.deleteObject({
+                Key: fullname,
+                Bucket: userData.bucket
               }, (err, data) => {
                 if(err) {
                   this._log(util.format('S3 error deleting object %s: %s', fullname, err));
@@ -484,22 +522,29 @@ class SFTPS3Server extends EventEmitter {
                 }
 
                 this._log('File deleted');
-                this.emit('file-deleted', { path: fullname, username: pubKey.username });
+                this.emit('file-deleted', { path: fullname, username: userData.username });
                 sftpStream.status(reqid, STATUS_CODE.OK);
               });
             }).on('RMDIR', (reqid, path) => {
               this._log(util.format('SFTP RMDIR %s', path));
-              var fullname = this._mapKey(pubKey.path, path);
+              var fullname = this._mapKey(userData.path, path);
 
-              this.s3.listObjects({
-                Prefix: fullname
+              userData.s3.listObjects({
+                Prefix: fullname,
+                Bucket: userData.bucket
               }, (err, data) => {
                 if(err) {
                   this._log(util.format('S3 error listing %s: %s', fullname, err));
                   return sftpStream.status(reqid, STATUS_CODE.FAILURE);
                 }
+                if(_.isUndefined(data.Contents)) {
+                  this._log('undefined contents');
+                  return sftpStream.status(reqid, STATUS_CODE.FAILURE);
+                }
 
-                var keys = data.Contents.map((c) => {
+                const keys = data.Contents.map((c): ObjectIdentifier => {
+                  if(_.isUndefined(c.Key))
+                    throw new Error('key undefined');
                   return {
                     Key: c.Key
                   };
@@ -510,10 +555,11 @@ class SFTPS3Server extends EventEmitter {
                   return sftpStream.status(reqid, STATUS_CODE.NO_SUCH_FILE);
                 }
 
-                this.s3.deleteObjects({
+                userData.s3.deleteObjects({
                   Delete: {
                     Objects: keys
-                  }
+                  },
+                  Bucket: userData.bucket
                 }, (err, data) => {
                   if(err) {
                     this._log('S3 error deleting objects: %s', err);
@@ -521,7 +567,7 @@ class SFTPS3Server extends EventEmitter {
                   }
 
                   this._log('Directory deleted');
-                  this.emit('directory-deleted', { path: fullname, username: pubKey.username });
+                  this.emit('directory-deleted', { path: fullname, username: userData.username });
                   return sftpStream.status(reqid, STATUS_CODE.OK);
                 });
               });
@@ -531,11 +577,12 @@ class SFTPS3Server extends EventEmitter {
               if(procPath.endsWith('/'))
                 procPath = procPath.slice(0, -1);
 
-              var fullname = this._mapKey(pubKey.path, procPath);
+              var fullname = this._mapKey(userData.path, procPath);
 
-              this.s3.putObject({
+              userData.s3.putObject({
                 Key: fullname,
-                Body: ''
+                Body: '',
+                Bucket: userData.bucket
               }, (err, data) => {
                 if(err) {
                   this._log(util.format('S3 error putting object %s: %s', fullname, err));
@@ -543,25 +590,27 @@ class SFTPS3Server extends EventEmitter {
                 }
 
                 this._log('Directory created');
-                this.emit('directory-created', { path: fullname, username: pubKey.username });
+                this.emit('directory-created', { path: fullname, username: userData.username });
                 return sftpStream.status(reqid, STATUS_CODE.OK);
               });
             }).on('RENAME', (reqid, oldPath, newPath) => {
               this._log(util.format('SFTP RENAME %s->%s', oldPath, newPath));
-              var fullnameOld = this._mapKey(pubKey.path, oldPath);
-              var fullnameNew = this._mapKey(pubKey.path, newPath);
+              var fullnameOld = this._mapKey(userData.path, oldPath);
+              var fullnameNew = this._mapKey(userData.path, newPath);
 
-              this.s3.copyObject({
+              userData.s3.copyObject({
                 Key: fullnameNew,
-                CopySource: this.s3.config.params.Bucket + '/' + fullnameOld
+                CopySource: userData.bucket + '/' + fullnameOld,
+                Bucket: userData.bucket
               }, (err, data) => {
                 if(err) {
                   this._log(util.format('S3 error copying %s to %s: %s', fullnameOld, fullnameNew, err));
                   return sftpStream.status(reqid, STATUS_CODE.NO_SUCH_FILE);
                 }
 
-                this.s3.deleteObject({
-                  Key: fullnameOld
+                userData.s3.deleteObject({
+                  Key: fullnameOld,
+                  Bucket: userData.bucket
                 }, (err, data) => {
                   if(err) {
                     this._log(util.format('S3 error deleting object %s: %s', fullnameOld, err));
@@ -569,64 +618,67 @@ class SFTPS3Server extends EventEmitter {
                   }
 
                   this._log('File renamed');
-                  this.emit('file-renamed', { path: fullnameNew, oldPath: fullnameOld, username: pubKey.username });
+                  this.emit('file-renamed', { path: fullnameNew, oldPath: fullnameOld, username: userData.username });
                   return sftpStream.status(reqid, STATUS_CODE.OK);
                 });
               });
-            }).on('STAT', onStat.bind(this))
-              .on('LSTAT', onStat.bind(this));
-            function onStat(reqid, path) {
-              this._log(util.format('SFTP STAT/LSTAT %s', path));
-              var fullname = this._mapKey(pubKey.path, path);
+            }).on('STAT', (reqid: number, path: string) => onStat(this, reqid, path))
+              .on('LSTAT', (reqid: number, path: string) => onStat(this, reqid, path));
+            function onStat(self: SFTPS3Server, reqid: number, path: string) {
+              self._log(util.format('SFTP STAT/LSTAT %s', path));
+              var fullname = self._mapKey(userData.path, path);
 
-              this.s3.listObjects({
-                Prefix: fullname
+              userData.s3.listObjects({
+                Prefix: fullname,
+                Bucket: userData.bucket
               }, (err, data) => {
                 if(err) {
-                  this._log(util.format('S3 error listing %s: %s', fullname, err));
+                  self._log(util.format('S3 error listing %s: %s', fullname, err));
                   return sftpStream.status(reqid, STATUS_CODE.FAILURE);
                 }
 
-                var exactMatch = _.find(data.Contents, { Key: fullname });    //exact filename match
-                if(exactMatch) {
-                  var mode = constants.S_IFREG;   // regular file
+                const exactMatch = _.find(data.Contents, { Key: fullname }) as S3.Object;    //exact filename match
+                if(!_.isUndefined(exactMatch)) {
+                  let mode = constants.S_IFREG;   // regular file
                   mode |= constants.S_IRWXU;      // read, write, execute for user
                   mode |= constants.S_IRWXG;      // read, write, execute for group
                   mode |= constants.S_IRWXO;      // read, write, execute for other
 
-                  this._log('Retrieved file attrs');
+                  self._log('Retrieved file attrs');
+                  const lastMod = exactMatch.LastModified || new Date();
                   sftpStream.attrs(reqid, {
                     mode: mode,
                     uid: 0,
                     gid: 0,
-                    size: exactMatch.Size,
-                    atime: exactMatch.LastModified,
-                    mtime: exactMatch.LastModified
+                    size: exactMatch.Size || 0,
+                    atime: Math.floor(+lastMod/1000),
+                    mtime: Math.floor(+lastMod/1000)
                   });
                   return;
                 }
                   
-                var directoryMatch = _.find(data.Contents, { Key: fullname + '/.dir' });    //directory match
+                const directoryMatch = _.find(data.Contents, { Key: fullname + '/.dir' });    //directory match
                 if(directoryMatch) {
                   var mode = constants.S_IFDIR;   // directory
                   mode |= constants.S_IRWXU;      // read, write, execute for user
                   mode |= constants.S_IRWXG;      // read, write, execute for group
                   mode |= constants.S_IRWXO;      // read, write, execute for other
 
-                  this._log('Retrieved directory attrs');
+                  self._log('Retrieved directory attrs');
+                  const lastMod = directoryMatch.LastModified || new Date();
                   sftpStream.attrs(reqid, {
                     mode: mode,
                     uid: 0,
                     gid: 0,
                     size: 1,
-                    atime: directoryMatch.LastModified,
-                    mtime: directoryMatch.LastModified
+                    atime: Math.floor(+lastMod/1000),
+                    mtime: Math.floor(+lastMod/1000)
                   });
                   return;
                 }
                   
                 //No matches
-                this._log(util.format('Key %s not in listing', fullname));
+                self._log(util.format('Key %s not in listing', fullname));
                 return sftpStream.status(reqid, STATUS_CODE.NO_SUCH_FILE);
               });
             }
@@ -649,7 +701,7 @@ class SFTPS3Server extends EventEmitter {
    *
    * @param {Function} cb - Callback for when stop is complete
    */
-  stop(cb) {
+  stop(cb: (err: Error) => any) {
     if(this.ssh) {
       this.ssh.close(cb);
       this.ssh = null;
@@ -661,25 +713,13 @@ class SFTPS3Server extends EventEmitter {
 
   //------------------------- Private Methods -------------------------------------
 
-  _log() {
+  _log(...args: Array<any>) {
     if (this.loggingEnabled) {
-      console.log.apply(console, arguments);
+      console.log(...args);
     }
   }
 
-  _findKey(username, key) {
-    for (var idx = 0; idx < this.publicKeys.length; idx++) {
-      if (this.publicKeys[idx]['username'] == username) {
-        var pubKey = this.publicKeys[idx];
-        if(key.algo === pubKey.key.fulltype &&
-          buffersEqual(key.data, pubKey.key.public)) {
-          return pubKey;
-        }
-      }
-    }
-  }
-
-  _mapKey(path, filename) {
+  _mapKey(path: string, filename: string) {
     var p = filename;
     p = p.replace('\\\\', '/');
     p = p.replace('\\.\\', '/');
@@ -693,4 +733,3 @@ class SFTPS3Server extends EventEmitter {
   }
 }
 
-module.exports = SFTPS3Server;
