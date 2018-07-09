@@ -1,6 +1,6 @@
 import { SFTPS3Server } from "../index";
 import InMemoryAuthHandler from "../lib/InMemoryAuthHandler";
-const S3Stub = require('./s3stub');
+const S3Stub = require('./s3stub').default;
 
 'use strict';
 
