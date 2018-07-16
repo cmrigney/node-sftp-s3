@@ -31,9 +31,7 @@
     "buffer-equal-constant-time": "^1.0.1",
     "lodash": "^4.14.1",
     "moment": "^2.14.1",
-    "ssh2": "^0.6.1"
-  },
-  "devDependencies": {
+    "ssh2": "^0.6.1",
     "@types/lodash": "^4.14.110",
     "@types/mocha": "^5.2.4",
     "@types/node": "^8.10.20",
@@ -42,7 +40,6 @@
     "coveralls": "^2.13.0",
     "http-range": "^1.0.0",
     "istanbul": "^0.4.5",
-    "lodash": "^4.14.1",
     "mocha": "^3.0.2",
     "nyc": "^10.2.0",
     "sinon": "^1.17.5",
