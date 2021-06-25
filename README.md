@@ -3,6 +3,8 @@
 
 [![Coverage Status](https://coveralls.io/repos/github/cmrigney/node-sftp-s3/badge.svg?branch=master)](https://coveralls.io/github/cmrigney/node-sftp-s3?branch=master)
 
+**UPDATE: I'm no longer maintaining this project. If you would like to take it over or you know of a solid fork, please reach out!**
+
 Node JS module for creating an SFTP server with user isolation that uses S3 for file storage.
 
 ## Install
